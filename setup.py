@@ -145,6 +145,7 @@ else:
     # <jre_home>/lib/<cpu>/.
     machine2cpu = {
         "i686" : "i386",
+        "AMD64" : "amd64",
         "x86_64" : "amd64",
         "armv7l" : "arm"
     }
