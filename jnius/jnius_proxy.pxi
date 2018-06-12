@@ -115,7 +115,7 @@ cdef jobject py_invoke0(JNIEnv *j_env, jobject j_this, jobject j_proxy, jobject
     for index, arg_signature in enumerate(args_signature):
         arg_signature = convert_signature.get(arg_signature, arg_signature)
         j_arg = j_env[0].GetObjectArrayElement(j_env, args, index)
-        py_arg = convert_jobject_to_python(j_env, arg_signature, j_arg)
+        py_arg = convert_jobject_to_python(j_env, arg_signature, j_arg, True)
         j_env[0].DeleteLocalRef(j_env, j_arg)
         py_args.append(py_arg)
 

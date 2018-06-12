@@ -386,10 +386,12 @@ cdef class JavaField(object):
     cdef name
     cdef classname
     cdef definition
+    cdef rvalue_conversion
 
     def __cinit__(self, definition, **kwargs):
         self.j_field = NULL
         self.j_cls = NULL
+        self.rvalue_conversion = True
 
     def __init__(self, definition, **kwargs):
         super(JavaField, self).__init__()
@@ -420,6 +422,9 @@ cdef class JavaField(object):
                     <char *>defstr)
         if self.j_field == NULL:
             raise JavaException('Unable to found the field {0}'.format(self.name))
+
+    cpdef void set_rvalue_conversion(self, convert):
+        self.rvalue_conversion = convert
 
     def __get__(self, obj, objtype):
         cdef jobject j_self
@@ -550,16 +555,21 @@ cdef class JavaField(object):
             check_exception(j_env)
             if j_object != NULL:
                 ret = convert_jobject_to_python(
-                        j_env, self.definition, j_object)
+                        j_env, self.definition, j_object, self.rvalue_conversion)
                 j_env[0].DeleteLocalRef(j_env, j_object)
         elif r == '[':
-            r = self.definition[1:]
             j_object = j_env[0].GetObjectField(
                     j_env, j_self, self.j_field)
             check_exception(j_env)
             if j_object != NULL:
-                ret = convert_jarray_to_python(j_env, r, j_object)
-                j_env[0].DeleteLocalRef(j_env, j_object)
+                if not self.rvalue_conversion:
+                    ret = convert_jobject_to_python(
+                            j_env, self.definition, j_object, self.rvalue_conversion)
+                    j_env[0].DeleteLocalRef(j_env, j_object)
+                else:
+                    r = self.definition[1:]
+                    ret = convert_jarray_to_python(j_env, r, j_object)
+                    j_env[0].DeleteLocalRef(j_env, j_object)
         else:
             raise Exception('Invalid field definition')
 
@@ -621,16 +631,21 @@ cdef class JavaField(object):
             check_exception(j_env)
             if j_object != NULL:
                 ret = convert_jobject_to_python(
-                        j_env, self.definition, j_object)
+                        j_env, self.definition, j_object, self.rvalue_conversion)
                 j_env[0].DeleteLocalRef(j_env, j_object)
         elif r == '[':
-            r = self.definition[1:]
             j_object = j_env[0].GetStaticObjectField(
                     j_env, self.j_cls, self.j_field)
             check_exception(j_env)
             if j_object != NULL:
-                ret = convert_jarray_to_python(j_env, r, j_object)
-                j_env[0].DeleteLocalRef(j_env, j_object)
+                if not self.rvalue_conversion:
+                    ret = convert_jobject_to_python(
+                            j_env, self.definition, j_object, self.rvalue_conversion)
+                    j_env[0].DeleteLocalRef(j_env, j_object)
+                else:
+                    r = self.definition[1:]
+                    ret = convert_jarray_to_python(j_env, r, j_object)
+                    j_env[0].DeleteLocalRef(j_env, j_object)
         else:
             raise Exception('Invalid field definition')
 
@@ -651,11 +666,13 @@ cdef class JavaMethod(object):
     cdef bint is_varargs
     cdef object definition_return
     cdef object definition_args
+    cdef object rvalue_conversion
 
     def __cinit__(self, definition, **kwargs):
         self.j_method = NULL
         self.j_cls = NULL
         self.j_self = None
+        self.rvalue_conversion = True
 
     def __init__(self, definition, **kwargs):
         super(JavaMethod, self).__init__()
@@ -692,6 +709,9 @@ cdef class JavaMethod(object):
         self.classname = classname
         self.j_cls = j_cls
         self.j_self = j_self
+
+    cpdef void set_rvalue_conversion(self, convert):
+        self.rvalue_conversion = convert
 
     def __get__(self, obj, objtype):
         if obj is None:
@@ -811,17 +831,22 @@ cdef class JavaMethod(object):
             check_exception(j_env)
             if j_object != NULL:
                 ret = convert_jobject_to_python(
-                        j_env, self.definition_return, j_object)
+                        j_env, self.definition_return, j_object, self.rvalue_conversion)
                 j_env[0].DeleteLocalRef(j_env, j_object)
         elif r == '[':
-            r = self.definition_return[1:]
             with nogil:
                 j_object = j_env[0].CallObjectMethodA(
                         j_env, j_self, self.j_method, j_args)
             check_exception(j_env)
             if j_object != NULL:
-                ret = convert_jarray_to_python(j_env, r, j_object)
-                j_env[0].DeleteLocalRef(j_env, j_object)
+                if not self.rvalue_conversion:
+                    ret = convert_jobject_to_python(
+                            j_env, self.definition_return, j_object, self.rvalue_conversion)
+                    j_env[0].DeleteLocalRef(j_env, j_object)
+                else:
+                    r = self.definition_return[1:]
+                    ret = convert_jarray_to_python(j_env, r, j_object)
+                    j_env[0].DeleteLocalRef(j_env, j_object)
         else:
             raise Exception('Invalid return definition?')
 
@@ -899,17 +924,22 @@ cdef class JavaMethod(object):
             check_exception(j_env)
             if j_object != NULL:
                 ret = convert_jobject_to_python(
-                        j_env, self.definition_return, j_object)
+                        j_env, self.definition_return, j_object, self.rvalue_conversion)
                 j_env[0].DeleteLocalRef(j_env, j_object)
         elif r == '[':
-            r = self.definition_return[1:]
             with nogil:
                 j_object = j_env[0].CallStaticObjectMethodA(
                         j_env, self.j_cls, self.j_method, j_args)
             check_exception(j_env)
             if j_object != NULL:
-                ret = convert_jarray_to_python(j_env, r, j_object)
-                j_env[0].DeleteLocalRef(j_env, j_object)
+                if not self.rvalue_conversion:
+                    ret = convert_jobject_to_python(
+                            j_env, self.definition_return, j_object, self.rvalue_conversion)
+                    j_env[0].DeleteLocalRef(j_env, j_object)
+                else:
+                    r = self.definition_return[1:]
+                    ret = convert_jarray_to_python(j_env, r, j_object)
+                    j_env[0].DeleteLocalRef(j_env, j_object)
         else:
             raise Exception('Invalid return definition?')
 
@@ -925,9 +955,11 @@ cdef class JavaMultipleMethod(object):
     cdef dict instance_methods
     cdef bytes name
     cdef bytes classname
+    cdef rvalue_conversion
 
     def __cinit__(self, definition, **kwargs):
         self.j_self = None
+        self.rvalue_conversion = True
 
     def __init__(self, definitions, **kwargs):
         super(JavaMultipleMethod, self).__init__()
@@ -967,6 +999,15 @@ cdef class JavaMultipleMethod(object):
                 jm = JavaMethod(signature, varargs=is_varargs)
                 jm.set_resolve_info(j_env, j_cls, None, name, classname)
                 self.instance_methods[signature] = jm
+
+    cpdef void set_rvalue_conversion(self, convert):
+        self.rvalue_conversion = convert
+        if self.j_self:
+            methods = self.instance_methods
+        else:
+            methods = self.static_methods
+        for signature, jm in items_compat(methods):
+            jm.set_rvalue_conversion(convert)
 
     def __call__(self, *args):
         # try to match our args to a signature

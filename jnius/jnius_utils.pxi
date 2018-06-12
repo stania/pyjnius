@@ -111,7 +111,7 @@ cdef void _append_exception_trace_messages(
     # Add Throwable.toString() before descending stack trace messages.
     if frames != NULL:
         msg_obj = j_env[0].CallObjectMethod(j_env, exc, mid_toString)
-        pystr = None if msg_obj == NULL else convert_jobject_to_python(j_env, <bytes> 'Ljava/lang/String;', msg_obj)
+        pystr = None if msg_obj == NULL else convert_jobject_to_python(j_env, <bytes> 'Ljava/lang/String;', msg_obj, True)
         # If this is not the top-of-the-trace then this is a cause.
         if len(pystack) > 0:
             pystack.append("Caused by:")
@@ -125,7 +125,7 @@ cdef void _append_exception_trace_messages(
             # Get the string returned from the 'toString()' method of the next frame and append it to the error message.
             frame = j_env[0].GetObjectArrayElement(j_env, frames, i)
             msg_obj = j_env[0].CallObjectMethod(j_env, frame, mid_toString)
-            pystr = None if msg_obj == NULL else convert_jobject_to_python(j_env, <bytes> 'Ljava/lang/String;', msg_obj)
+            pystr = None if msg_obj == NULL else convert_jobject_to_python(j_env, <bytes> 'Ljava/lang/String;', msg_obj, True)
             pystack.append(pystr)
             if msg_obj != NULL:
                 j_env[0].DeleteLocalRef(j_env, msg_obj)
@@ -213,7 +213,7 @@ cdef lookup_java_object_name(JNIEnv *j_env, jobject j_obj):
     cdef jclass jcls2 = j_env[0].GetObjectClass(j_env, jcls)
     cdef jmethodID jmeth = j_env[0].GetMethodID(j_env, jcls2, 'getName', '()Ljava/lang/String;')
     cdef jobject js = j_env[0].CallObjectMethod(j_env, jcls, jmeth)
-    name = convert_jobject_to_python(j_env, 'Ljava/lang/String;', js)
+    name = convert_jobject_to_python(j_env, 'Ljava/lang/String;', js, True)
     j_env[0].DeleteLocalRef(j_env, js)
     j_env[0].DeleteLocalRef(j_env, jcls)
     j_env[0].DeleteLocalRef(j_env, jcls2)
@@ -375,6 +375,12 @@ cdef int calculate_score(sign_args, args, is_varargs=False) except *:
             if r == '[B' and isinstance(arg, (bytearray, ByteArray)):
                 score += 10
                 continue
+
+            if isinstance(arg, JavaClass):
+                jc = arg
+                if jc.__javaclass__ == r:
+                    score += 10
+                    continue
 
             if not isinstance(arg, (list, tuple)):
                 return -1

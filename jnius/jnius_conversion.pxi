@@ -1,5 +1,8 @@
 from cpython.version cimport PY_MAJOR_VERSION
 from cpython cimport PyUnicode_DecodeUTF16
+from sys import stdout
+import numpy as np
+import ctypes
 
 cdef jstringy_arg(argtype):
     return argtype in ('Ljava/lang/String;',
@@ -83,6 +86,8 @@ cdef void populate_args(JNIEnv *j_env, tuple definition_args, jvalue *j_args, ar
                 j_args[index].l = jc.j_cls
             elif isinstance(py_arg, (tuple, list)):
                 j_args[index].l = convert_pyarray_to_java(j_env, argtype, py_arg)
+            elif isinstance(py_arg, np.ndarray):
+                j_args[index].l = convert_ndarray_to_java(j_env, argtype, py_arg)
             else:
                 raise JavaException('Invalid python object for this '
                         'argument. Want {0!r}, got {1!r}'.format(
@@ -90,6 +95,10 @@ cdef void populate_args(JNIEnv *j_env, tuple definition_args, jvalue *j_args, ar
         elif argtype[0] == '[':
             if py_arg is None:
                 j_args[index].l = NULL
+                continue
+            if isinstance(py_arg, JavaClass) and py_arg.__javaclass__ == argtype:
+                jc = py_arg
+                j_args[index].l = jc.j_self.obj
                 continue
             if isinstance(py_arg, basestring) and PY_MAJOR_VERSION < 3:
                 if argtype == '[B':
@@ -108,7 +117,7 @@ cdef void populate_args(JNIEnv *j_env, tuple definition_args, jvalue *j_args, ar
                     j_env, argtype[1:], py_arg)
 
 
-cdef convert_jobject_to_python(JNIEnv *j_env, definition, jobject j_object):
+cdef convert_jobject_to_python(JNIEnv *j_env, definition, jobject j_object, rvalue_conversion):
     # Convert a Java Object to a Python object, according to the definition.
     # If the definition is a java/lang/Object, then try to determine what is it
     # exactly.
@@ -122,6 +131,11 @@ cdef convert_jobject_to_python(JNIEnv *j_env, definition, jobject j_object):
     if r == 'java/lang/Object':
         r = definition = lookup_java_object_name(j_env, j_object)
         # print('cjtp:r {0} definition {1}'.format(r, definition))
+
+    if not rvalue_conversion:
+        ret_jc = ensure_jclass(r)
+        ret_jc.instanciate_from(create_local_ref(j_env, j_object))
+        return ret_jc
 
     if definition[0] == '[':
         return convert_jarray_to_python(j_env, definition[1:], j_object)
@@ -177,6 +191,11 @@ cdef convert_jobject_to_python(JNIEnv *j_env, definition, jobject j_object):
         retmeth = j_env[0].GetMethodID(j_env, retclass, 'charValue', '()C')
         return ord(j_env[0].CallCharMethod(j_env, j_object, retmeth))
 
+    ret_jc = ensure_jclass(r)
+    ret_jc.instanciate_from(create_local_ref(j_env, j_object))
+    return ret_jc
+
+cdef ensure_jclass(r):
     if r not in jclass_register:
         if r.startswith('$Proxy'):
             # only for $Proxy on android, don't use autoclass. The dalvik vm is
@@ -189,7 +208,6 @@ cdef convert_jobject_to_python(JNIEnv *j_env, definition, jobject j_object):
             ret_jc = autoclass(r.replace('/', '.'))(noinstance=True)
     else:
         ret_jc = jclass_register[r](noinstance=True)
-    ret_jc.instanciate_from(create_local_ref(j_env, j_object))
     return ret_jc
 
 cdef convert_jstring_to_python(JNIEnv *j_env, jstring j_string):
@@ -310,7 +328,7 @@ cdef convert_jarray_to_python(JNIEnv *j_env, definition, jobject j_object):
             if j_object_item == NULL:
                 ret.append(None)
                 continue
-            obj = convert_jobject_to_python(j_env, definition, j_object_item)
+            obj = convert_jobject_to_python(j_env, definition, j_object_item, True)
             ret.append(obj)
             j_env[0].DeleteLocalRef(j_env, j_object_item)
 
@@ -386,6 +404,8 @@ cdef jobject convert_python_to_jobject(JNIEnv *j_env, definition, obj) except *:
             return jc.j_self.obj
         elif isinstance(obj, (tuple, list)):
             return convert_pyarray_to_java(j_env, definition, obj)
+        elif isinstance(obj, np.ndarray):
+            return convert_ndarray_to_java(j_env, definition, obj)
         else:
             raise JavaException('Invalid python object for this '
                     'argument. Want {0!r}, got {1!r}'.format(
@@ -481,6 +501,47 @@ cdef jstring convert_pystr_to_java(JNIEnv *j_env, basestring py_str) except NULL
     if j_str == NULL:
         check_exception(j_env) # raise error as JavaException
     return j_str
+
+cdef jobject convert_ndarray_to_java(JNIEnv *j_env, definition, ndarr) except *:
+    cdef jint j_int
+    cdef jobject ret = NULL
+    cdef int[:] intarray
+    cdef short[:] shortarray
+    cdef long long[:] longarray
+    cdef float[:] floatarray
+    cdef double[:] doublearray
+    if issubclass(ndarr.dtype.type, np.integer):
+        target_size = ndarr.dtype.itemsize
+        if target_size <= 4 and issubclass(ndarr.dtype.type, np.unsignedinteger):
+            target_size = target_size * 2
+        if target_size == 2:
+            shortarray = ndarr.astype('i' + str(target_size))
+            ret = j_env[0].NewShortArray(j_env, len(shortarray))
+            j_env[0].SetShortArrayRegion(j_env, ret, 0, len(shortarray), <const_jshort *>&shortarray[0])
+            return <jobject>ret
+        elif target_size == 4:
+            intarray = ndarr.astype('i' + str(target_size))
+            ret = j_env[0].NewIntArray(j_env, len(intarray))
+            j_env[0].SetIntArrayRegion(j_env, ret, 0, len(intarray), <const_jint *>&intarray[0])
+            return <jobject>ret
+        elif target_size == 8:
+            longarray = ndarr.astype('i' + str(target_size))
+            ret = j_env[0].NewLongArray(j_env, len(longarray))
+            j_env[0].SetLongArrayRegion(j_env, ret, 0, len(longarray), <const_jlong *>&longarray[0])
+            return <jobject>ret
+    elif issubclass(ndarr.dtype.type, np.floating):
+        target_size = ndarr.dtype.itemsize
+        if target_size == 4:
+            floatarray = ndarr
+            ret = j_env[0].NewFloatArray(j_env, len(floatarray))
+            j_env[0].SetFloatArrayRegion(j_env, ret, 0, len(floatarray), <const_jfloat *>&floatarray[0])
+            return <jobject>ret
+        if target_size == 8:
+            doublearray = ndarr
+            ret = j_env[0].NewDoubleArray(j_env, len(doublearray))
+            j_env[0].SetDoubleArrayRegion(j_env, ret, 0, len(doublearray), <const_jdouble *>&doublearray[0])
+            return <jobject>ret
+    raise JavaException('unsupported ndarray type', definition, ndarr)
 
 cdef jobject convert_pyarray_to_java(JNIEnv *j_env, definition, pyarray) except *:
     cdef jobject ret = NULL
